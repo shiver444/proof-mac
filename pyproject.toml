@@ -1,0 +1,12 @@
+[project]
+name = "proofmaker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ecdsa>=0.19.1",
+    "jcs>=0.2.1",
+    "pyinstaller>=6.18.0",
+    "requests>=2.32.5",
+]
