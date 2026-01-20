@@ -16,23 +16,27 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller ecdsa jcs requests
 
+      # Debug: list files to confirm fingerprint.png exists
       - name: Debug files
         run: ls -la
 
+      # Build the Mac app using absolute path for the PNG
       - name: Build Mac app
         run: |
           pyinstaller \
             --windowed \
             --name "PrintGUI" \
             --add-data "$(pwd)/fingerprint.png:." \
-            printGUI.py
+            ./printGUI.py
 
+      # Create DMG
       - name: Create DMG
         run: |
           mkdir dmg
           cp -R "dist/PrintGUI.app" dmg/
           hdiutil create -volname "PrintGUI" -srcfolder dmg -ov -format UDZO PrintGUI-mac.dmg
 
+      # Upload the DMG as artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
