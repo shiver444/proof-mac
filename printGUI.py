@@ -81,12 +81,21 @@ def sign_fingerprint(fingerprint_value, private_key):
     )
 
 def submit_fingerprint(signed_fingerprint, user_metadata, profile):
-    api_key = profile.get("api_key", "YOUR_DEFAULT_API_KEY")
+    # Grab required profile info
+    api_key = profile.get("api_key")
+    org_id = profile.get("org_id")
+    tenant_id = profile.get("tenant_id")
     meta_name = user_metadata or signed_fingerprint.content.documentId
 
-    org_id = profile.get("org_id", signed_fingerprint.content.orgId)
-    tenant_id = profile.get("tenant_id", signed_fingerprint.content.tenantId)
+    # Ensure nothing is missing
+    if not api_key:
+        raise ValueError("Active profile is missing API key.")
+    if not org_id:
+        raise ValueError("Active profile is missing Org ID.")
+    if not tenant_id:
+        raise ValueError("Active profile is missing Tenant ID.")
 
+    # Assign profile values to fingerprint
     signed_fingerprint.content.orgId = org_id
     signed_fingerprint.content.tenantId = tenant_id
 
@@ -139,11 +148,8 @@ class FingerprintApp:
         self.private_key = SigningKey.generate(curve=SECP256k1)
 
         # -----------------
-        # -------------------------------
-        # -------------------------------
         # Profile manager functions
-        # -------------------------------
-
+        # -----------------
         def get_active_profile():
             active_name = self.profiles_data.get("active")
             for p in self.profiles_data.get("profiles", []):
@@ -191,7 +197,7 @@ class FingerprintApp:
                     messagebox.showerror("Error", "Profile Name is required.")
                     return
 
-                # If profile with same name exists, update it
+                # Update or add
                 for idx, p in enumerate(self.profiles_data["profiles"]):
                     if p["profile_name"] == name:
                         self.profiles_data["profiles"][idx] = {
@@ -202,7 +208,6 @@ class FingerprintApp:
                         }
                         break
                 else:
-                    # New profile
                     self.profiles_data["profiles"].append({
                         "profile_name": name,
                         "api_key": api,
@@ -264,17 +269,6 @@ class FingerprintApp:
         master.config(menu=menubar)
 
         # -----------------
-        # Menu
-        # -----------------
-        menubar = tk.Menu(master)
-        profile_menu = tk.Menu(menubar, tearoff=0)
-        profile_menu.add_command(label="Add Profile", command=self.add_profile)
-        profile_menu.add_command(label="Select Profile", command=self.select_profile)
-        profile_menu.add_command(label="Delete Profile", command=self.delete_profile)
-        menubar.add_cascade(label="Profile", menu=profile_menu)
-        master.config(menu=menubar)
-
-        # -----------------
         # Form
         # -----------------
         form = tk.Frame(master)
@@ -291,7 +285,6 @@ class FingerprintApp:
         self.doc_id_entry.grid(row=1, column=1, sticky="ew", padx=5)
 
         tk.Label(form, text="Metadata (optional - up to 32 characters):").grid(row=2, column=0, sticky="w")
-        # ------------- metadata with live counter -------------
         self.meta_var = tk.StringVar(master=self.master)
         self.meta_entry = tk.Entry(form, textvariable=self.meta_var)
         self.meta_entry.grid(row=2, column=1, sticky="ew", padx=5)
@@ -308,7 +301,6 @@ class FingerprintApp:
         self.output = scrolledtext.ScrolledText(master, height=25, wrap=tk.WORD)
         self.output.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Enable right-click menus for all Entry widgets
         self.enable_entry_context_menus()
 
     # -----------------
@@ -328,22 +320,20 @@ class FingerprintApp:
                     m.tk_popup(event.x_root, event.y_root)
 
                 widget.bind("<Button-3>", show_menu)
-                widget.bind("<Control-Button-1>", show_menu)  # macOS alternative
+                widget.bind("<Control-Button-1>", show_menu)
 
-            # Recursive call for child widgets (like Frames inside Frames)
             if widget.winfo_children():
                 self.enable_entry_context_menus(widget)
 
     # -----------------
-    # Metadata counter method (still inside class, after __init__)
+    # Metadata counter
     # -----------------
     def update_meta_count(self, *args):
         count = len(self.meta_var.get())
-        if count > 32:
-            self.meta_count_label.config(fg="red")
-        else:
-            self.meta_count_label.config(fg="black")
-        self.meta_count_label.config(text=f"{count} / 32")
+        self.meta_count_label.config(
+            text=f"{count} / 32",
+            fg="red" if count > 32 else "black"
+        )
 
     # -----------------
     # File Browsing
@@ -370,69 +360,68 @@ class FingerprintApp:
         self.process_files(files)
 
     # -----------------
-    # Core processing (clickable output)
+    # Core processing
     # -----------------
     def process_files(self, files):
         try:
             user_metadata = self.meta_entry.get().strip()
-
             if len(user_metadata) > 32:
                 messagebox.showerror("Error", "Metadata cannot exceed 32 characters.")
                 return
 
             files = [f for f in files if f and f.strip()]
-
             if not files:
                 messagebox.showerror("Error", "No file selected.")
                 return
 
-            processed = 0
+            # Ensure active profile is complete
+            if not self.active_profile.get("org_id") or not self.active_profile.get("tenant_id") or not self.active_profile.get("api_key"):
+                messagebox.showerror(
+                    "Profile Error",
+                    "Active profile missing Org ID, Tenant ID, or API key.\n"
+                    "Please add/edit your profile first."
+                )
+                return
 
+            processed = 0
             for path in files:
                 if not os.path.exists(path):
                     raise FileNotFoundError(f"File not found: {path}")
 
                 doc_id = self.doc_id_entry.get().strip() or os.path.splitext(os.path.basename(path))[0]
-
                 with open(path, "rb") as f:
                     content = f.read()
 
                 h = hash_document(content)
+
                 fp = create_fingerprint_value(
-                    "c205c1dc-c592-4644-bf4a-567506e86964",
-                    "8d49ca1b-a6a9-4bee-90d4-8a6da40ef1d2",
-                    doc_id,
-                    h
+                    orgId=self.active_profile.get("org_id"),
+                    tenantId=self.active_profile.get("tenant_id"),
+                    documentId=doc_id,
+                    documentRef=h
                 )
+
                 signed_fp = sign_fingerprint(fp, self.private_key)
                 result = submit_fingerprint(signed_fp, user_metadata, self.active_profile)
 
                 if result and "hash" in result[0]:
                     link = f"https://digitalevidence.constellationnetwork.io/fingerprint/{result[0]['hash']}"
-
-                    # Insert text
                     self.output.insert(tk.END, f"{doc_id} → {link}\n")
                     start_index = f"{self.output.index(tk.END)}-2l linestart"
                     end_index = f"{self.output.index(tk.END)}-1c"
-
                     tag_name = f"link_{uuid.uuid4().hex}"
                     self.output.tag_add(tag_name, start_index, end_index)
                     self.output.tag_config(tag_name, foreground="blue", underline=True)
-
-                    # Clickable
                     self.output.tag_bind(tag_name, "<Enter>", lambda e: self.output.config(cursor="hand2"))
                     self.output.tag_bind(tag_name, "<Leave>", lambda e: self.output.config(cursor=""))
                     self.output.tag_bind(tag_name, "<Button-1>", lambda e, url=link: webbrowser.open(url))
 
                     log_fingerprint(path, doc_id, link)
 
-                    # Save JSON sidecar
                     output_folder = "fingerprint_proofs"
                     os.makedirs(output_folder, exist_ok=True)
-
                     safe_doc_id = re.sub(r"[^\w\d_-]", "_", doc_id)
                     json_filename = os.path.join(output_folder, f"{safe_doc_id}.fingerprint.json")
-
                     proof_data = {
                         "file_name": os.path.basename(path),
                         "file_path": path,
@@ -446,7 +435,6 @@ class FingerprintApp:
                         "network": "Constellation",
                         "signing_key": signed_fp.proofs[0].id
                     }
-
                     with open(json_filename, "w", encoding="utf-8") as jf:
                         json.dump(proof_data, jf, indent=4)
 
@@ -458,14 +446,13 @@ class FingerprintApp:
                 return
 
             self.output.insert(tk.END, "\n")
-            if processed == 1:
-                messagebox.showinfo("Success", "Fingerprinting completed for 1 file.")
-            else:
-                messagebox.showinfo("Success", f"Batch fingerprinting completed for {processed} files.")
+            messagebox.showinfo(
+                "Success",
+                f"Fingerprinting completed for {processed} file{'s' if processed>1 else ''}."
+            )
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
 
 if __name__ == "__main__":
     root = tk.Tk()
