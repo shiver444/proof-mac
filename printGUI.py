@@ -13,6 +13,9 @@ import requests
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox, simpledialog
 from typing import Optional, Dict, Any
+import sys
+
+os.chdir(sys._MEIPASS)
 
 PROFILE_FILE = "profiles.json"
 
